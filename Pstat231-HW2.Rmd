@@ -1,0 +1,190 @@
+---
+title: "Pstat231HW2"
+author: "Zihao Yang"
+date: '2022-04-10'
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: inline
+---
+
+
+```{r setup, echo=FALSE}
+library(knitr)
+# set global chunk options: images will be 7x5 inches
+knitr::opts_chunk$set(fig.width=7, fig.height=5)
+options(digits = 8)
+
+
+## indents are for indenting r code as formatted text
+## They may need to be adjusted depending on your OS
+# if your output looks odd, increase or decrease indent
+indent1 = '    '
+indent2 = '        '
+indent3 = '            '
+```
+
+```{r echo = T, results = 'hide', message=FALSE}
+#install.packages("tidyverse")
+#install.packages("tidymodels")
+#install.packages("ISLR")
+tinytex::install_tinytex
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(ggplot2)
+library(corrplot)
+library(ggthemes)
+library(yardstick)
+tidymodels_prefer()
+set.seed(100)
+```
+
+```{r}
+# Get the dataset
+abalone <- read.csv("abalone.csv")
+head(abalone)
+```
+### Q1
+```{r}
+# Add age column to the abalone with "rings" + 1.5
+abalone["age"] <- abalone["rings"]+1.5
+# To assess the distribution of age, we can use histogram to check
+abalone %>% ggplot(aes(age))+geom_histogram(bins=30)
+```
+According to the plot, the distribution of age relatively follows the normal distribution with mean at about 10-12, but it is slightly skewed to the right. The majority of data locates between 4 and 17, however, there exist some extreme outliers around 30.  
+
+### Q2
+```{r}
+abalone_split <- initial_split(abalone,prop=0.80,strata = age)
+abalone_train <- training(abalone_split)
+abalone_test <- testing(abalone_split)
+```
+  
+### Q3
+```{r}
+abtrain_wo_rings <- abalone_train %>% select(-rings)
+abalone_recipe <- recipe(age ~ ., data = abtrain_wo_rings) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(terms= ~ starts_with("type"):shucked_weight+
+                  longest_shell:diameter+
+                  shucked_weight:shell_weight) %>% 
+  step_center(all_predictors()) %>% 
+  step_scale(all_predictors())
+```
+We can't use rings to predict age, because the age column is just the linear transformation of the rings column, they have exactly the same trend and distribution with shift. Thus, rings cannot be used to predict age.  
+
+### Q4
+```{r}
+lm_model<-linear_reg() %>% 
+  set_engine("lm")
+```
+  
+### Q5
+```{r}
+lm_wflow <- workflow() %>% 
+  add_model(lm_model) %>% 
+  add_recipe(abalone_recipe)
+```
+  
+### Q6
+```{r}
+lm_fit <- fit(lm_wflow,abalone_train %>% select(-rings))
+female_pred <- data.frame(type = "F", longest_shell = 0.50, 
+                          diameter = 0.10, height = 0.30, 
+                          whole_weight = 4, shucked_weight = 1, 
+                          viscera_weight = 2, shell_weight = 1)
+predict(lm_fit, new_data = female_pred)
+lm_fit %>% 
+  # This returns the parsnip object:
+  extract_fit_parsnip() %>% 
+  # Now tidy the linear model object:
+  tidy()
+```
+  
+### Q7
+```{r}
+abalone_train_res <- predict(lm_fit, new_data = abtrain_wo_rings %>% select(-age))
+abalone_train_res <- bind_cols(abalone_train_res, abtrain_wo_rings %>% select(age))
+abalone_train_res %>% 
+  head()
+```
+```{r}
+abalone_metrics<-metric_set(rmse,rsq,mae)
+abalone_metrics(abalone_train_res, truth=age,
+                estimate=.pred)
+```
+We get approximate 0.55437525 for R squared value which indicates that 55.437525% of the data fit the regression model.
+  
+## 231 part:
+### Q8
+reducible error: $var(\hat{f}(x_0))+[bias(\hat{f}(x_0))]^2$
+irreducible error: $Var(\epsilon)$
+  
+### Q9
+$$
+E[(y_0 - \hat{f}(x_0))^2]=Var(\hat{f}(x_0))+[Bias(\hat{f}(x_0))]^2+Var(\epsilon)
+$$
+The best case is letting the reducible error reduce to 0, that is to say, let $\hat{f}(x_0)$ be unbiased, which means it equals $f(x_0)$. Then the first and second term of the right hand side equal to 0. But the irreducible error $Var(\epsilon)$ still exists. Then
+$$
+E[(y_0 - \hat{f}(x_0))^2]=0+0+Var(\epsilon)=Var(\epsilon)
+$$
+Thus, the expected test error is always at least as large as the irreducible error.
+  
+Or we can say
+$$
+E[(y_0 - \hat{f}(x_0))^2] = E[(f(x_0) + \epsilon - \hat{f}(x_0))^2]
+$$
+by underlying model.
+  
+Since under the best case,$\hat{f}(x_0)$ is unbiased, and equals to $f(x_0)$. Then we have
+$$
+E[(f(x_0) + \epsilon - \hat{f}(x_0))^2] =E[(f(x_0) + \epsilon - f(x_0))^2] =E[\epsilon^2]
+$$
+Since $\epsilon$ is zero-mean random noise term. Then 
+$$
+\begin{aligned}
+E[\epsilon]&=0 \\
+E[\epsilon]^2&=0\\
+E[\epsilon^2]&=E[\epsilon^2]-0\\
+&=E[\epsilon^2]-E[\epsilon]^2\\
+&=Var(\epsilon)
+\end{aligned}
+$$
+Thus, in the best case $E[(f(x_0) + \epsilon - \hat{f}(x_0))^2]=Var(\epsilon)$.
+  
+### Q10
+$$
+\begin{aligned}
+E[(y_0-\hat{f}(x_0))^2]& = E[(f(x_0)+\epsilon-\hat{f}(x_0))^2] \\
+&= E[(f(x_0)-\hat{f}(x_0))^2]+2E[(f(x_0)-\hat{f}(x_0))\epsilon]+E[\epsilon^2]\\
+&= E\left[\left(f(x_0) - E(\hat{f}(x_0)) + E(\hat{f}(x_0))-\hat{f}(x_0) \right)^2 \right] + 2E[(f(x_0)-\hat{f}(x_0))\epsilon]+Var(\epsilon) \\
+&=E\left[\left(f(x_0) - E(\hat{f}(x_0)) + E(\hat{f}(x_0))-\hat{f}(x_0) \right)^2 \right] +2E[({f}(x_0) -\hat{f}(x_0))] E[\epsilon]+Var(\epsilon)\\
+&=E\left[\left(f(x_0) - E(\hat{f}(x_0)) + E(\hat{f}(x_0))-\hat{f}(x_0) \right)^2 \right] +Var(\epsilon)\\
+&= E[(E[\hat{f}(x_0)] - f(x_0))^2] + E[(\hat{f}(x_0) - E[\hat{f}(x_0)]^2] - 2E[(f(x_0) - E[\hat{f}(x_0)])(\hat{f}(x_0) -E[\hat{f}(x_0)])]+Var(\epsilon)\\
+&= (E[\hat{f}(x_0)] - f(x_0))^2 + E[(\hat{f}(x_0) - E[\hat{f}(x_0)])^2] - 2(f(x_0) - E[\hat{f}(x_0)]) E[(\hat{f}(x_0)-E[\hat{f}(x_0)])]+Var(\epsilon)\\
+&= [Bias[\hat{f}(x_0)]]^2 + Var(\hat{f}(x_0)) - 2(f(x_0) - E[\hat{f}(x_0)]) (E[\hat{f}(x_0)] - E[\hat{f}(x_0)])+ Var(\epsilon)\\
+&= [Bias[\hat{f}(x_0)]]^2 + Var(\hat{f}(x_0))+Var(\epsilon)\\
+& = Var(\hat{f}(x_0)) + [Bias(\hat{f}(x_0))]^2 + Var(\epsilon).
+\end{aligned}
+$$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
